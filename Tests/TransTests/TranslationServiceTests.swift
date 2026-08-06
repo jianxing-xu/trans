@@ -130,14 +130,37 @@ final class TranslationServiceTests: XCTestCase {
         XCTAssertNil(LLMTranslationService.completionsURL(from: "example.com/v1"))
     }
 
-    func testSharedPromptExplicitlyNamesAdditionalTargetLanguage() {
+    func testSharedPromptSeparatesTargetLanguageFromSourceText() {
         XCTAssertEqual(
-            LLMTranslationPrompt.userPrompt(
+            LLMTranslationPrompt.messages(
                 text: "今天天气怎么样 用这段测试",
                 targetLanguage: "ja"
             ),
-            "将以下内容翻译成日语\n\n今天天气怎么样 用这段测试"
+            [
+                .init(role: "system", content: LLMTranslationPrompt.systemPrompt),
+                .init(role: "user", content: "将以下内容翻译成日语"),
+                .init(role: "user", content: "今天天气怎么样 用这段测试")
+            ]
         )
+    }
+
+    func testLLMRequestUsesSeparatedTargetAndSourceMessages() throws {
+        let request = try LLMTranslationService.makeRequest(
+            text: "今天天气怎么样 用这段测试",
+            targetLanguage: "ja",
+            baseURL: "https://example.com/v1",
+            apiKey: "test-key",
+            model: "deepseek-chat"
+        )
+        let body = try XCTUnwrap(request.httpBody)
+        let json = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: body) as? [String: Any]
+        )
+        let messages = try XCTUnwrap(json["messages"] as? [[String: String]])
+
+        XCTAssertEqual(messages.count, 3)
+        XCTAssertEqual(messages[1]["content"], "将以下内容翻译成日语")
+        XCTAssertEqual(messages[2]["content"], "今天天气怎么样 用这段测试")
     }
 
     func testServicePreferencesNormalizeDuplicatesAndMissingServices() {
@@ -174,8 +197,8 @@ final class TranslationServiceTests: XCTestCase {
 
     func testOllamaRequestUsesChatEndpointAndSharedPrompt() throws {
         let request = try OllamaTranslationService.makeRequest(
-            text: "今天天气真好。",
-            targetLanguage: TranslationLanguage.english.code,
+            text: "今天天气怎么样 用这段测试",
+            targetLanguage: "ja",
             baseURL: TranslationDefaults.ollamaBaseURL,
             model: TranslationDefaults.ollamaModel
         )
@@ -193,17 +216,13 @@ final class TranslationServiceTests: XCTestCase {
         XCTAssertEqual(json["model"] as? String, "hy-mt2-1.8b")
         XCTAssertEqual(json["stream"] as? Bool, false)
         let messages = try XCTUnwrap(json["messages"] as? [[String: String]])
-        XCTAssertEqual(messages.count, 2)
+        XCTAssertEqual(messages.count, 3)
         XCTAssertEqual(messages[0]["role"], "system")
         XCTAssertEqual(messages[0]["content"], LLMTranslationPrompt.systemPrompt)
         XCTAssertEqual(messages[1]["role"], "user")
-        XCTAssertEqual(
-            messages[1]["content"],
-            LLMTranslationPrompt.userPrompt(
-                text: "今天天气真好。",
-                targetLanguage: TranslationLanguage.english.code
-            )
-        )
+        XCTAssertEqual(messages[1]["content"], "将以下内容翻译成日语")
+        XCTAssertEqual(messages[2]["role"], "user")
+        XCTAssertEqual(messages[2]["content"], "今天天气怎么样 用这段测试")
     }
 
     func testOllamaParsesChatResponse() throws {

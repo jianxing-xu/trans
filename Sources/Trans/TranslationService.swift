@@ -301,21 +301,33 @@ struct AlibabaTranslationService: TranslationService {
 }
 
 enum LLMTranslationPrompt {
-    static let systemPrompt = """
-    你是一个翻译专家，直接给我翻译的结果，不要有任何额外的信息
-    规则：在没有明确要求翻译成什么语言的时候遵循，收到英文翻译成中文，收到中文翻译成英文
-    """
-
-    static func userPrompt(text: String, targetLanguage: String) -> String {
-        if targetLanguage == TranslationLanguage.chinese.code
-            || targetLanguage == TranslationLanguage.english.code {
-            return text
-        }
-        return "将以下内容翻译成\(promptLanguageName(for: targetLanguage))\n\n\(text)"
+    struct Message: Codable, Equatable {
+        let role: String
+        let content: String
     }
 
-    static func generatePrompt(text: String, targetLanguage: String) -> String {
-        "\(systemPrompt)\n\n\(userPrompt(text: text, targetLanguage: targetLanguage))"
+    static let systemPrompt = """
+    你是一个翻译专家，直接给我翻译的结果，不要有任何额外的信息。
+    规则：在没有明确要求翻译成什么语言的时候遵循：收到英文翻译成中文，收到中文翻译成英文，中英混杂的情况下优先翻译成英文。
+    判断输入语言要看整段文本的主体，不要只看开头几个词。中文为主的文本即使开头有英文单词也算中文输入，必须翻译成英文。
+    按键名、专有名词、代码如 Shift、Enter、macOS 保留原文不翻译。
+    """
+
+    static func messages(text: String, targetLanguage: String) -> [Message] {
+        var messages = [Message(role: "system", content: systemPrompt)]
+        if let targetPrompt = targetLanguagePrompt(for: targetLanguage) {
+            messages.append(Message(role: "user", content: targetPrompt))
+        }
+        messages.append(Message(role: "user", content: text))
+        return messages
+    }
+
+    private static func targetLanguagePrompt(for code: String) -> String? {
+        guard code != TranslationLanguage.chinese.code,
+              code != TranslationLanguage.english.code else {
+            return nil
+        }
+        return "将以下内容翻译成\(promptLanguageName(for: code))"
     }
 
     private static func promptLanguageName(for code: String) -> String {
@@ -337,21 +349,15 @@ enum LLMTranslationPrompt {
 }
 
 struct LLMTranslationService: TranslationService {
-
-    private struct Message: Codable {
-        let role: String
-        let content: String
-    }
-
     private struct RequestBody: Encodable {
         let model: String
-        let messages: [Message]
+        let messages: [LLMTranslationPrompt.Message]
         let temperature: Double
     }
 
     private struct ResponseBody: Decodable {
         struct Choice: Decodable {
-            let message: Message
+            let message: LLMTranslationPrompt.Message
         }
 
         let choices: [Choice]
@@ -365,29 +371,13 @@ struct LLMTranslationService: TranslationService {
         guard configuration.hasLLMConfiguration else {
             throw TranslationError.missingLLMConfiguration
         }
-        guard let url = Self.completionsURL(from: configuration.llmBaseURL) else {
-            throw TranslationError.invalidEndpoint
-        }
-
-        let userPrompt = LLMTranslationPrompt.userPrompt(
+        let request = try Self.makeRequest(
             text: text,
-            targetLanguage: targetLanguage
+            targetLanguage: targetLanguage,
+            baseURL: configuration.llmBaseURL,
+            apiKey: configuration.llmAPIKey,
+            model: configuration.llmModel
         )
-        let body = RequestBody(
-            model: configuration.llmModel,
-            messages: [
-                Message(role: "system", content: LLMTranslationPrompt.systemPrompt),
-                Message(role: "user", content: userPrompt)
-            ],
-            temperature: 0
-        )
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.timeoutInterval = 30
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(configuration.llmAPIKey)", forHTTPHeaderField: "Authorization")
-        request.httpBody = try JSONEncoder().encode(body)
 
         let (data, response) = try await URLSession.shared.data(for: request)
         try validate(response: response, data: data)
@@ -407,6 +397,33 @@ struct LLMTranslationService: TranslationService {
         )
     }
 
+    static func makeRequest(
+        text: String,
+        targetLanguage: String,
+        baseURL: String,
+        apiKey: String,
+        model: String
+    ) throws -> URLRequest {
+        guard let url = completionsURL(from: baseURL) else {
+            throw TranslationError.invalidEndpoint
+        }
+        let body = RequestBody(
+            model: model,
+            messages: LLMTranslationPrompt.messages(
+                text: text,
+                targetLanguage: targetLanguage
+            ),
+            temperature: 0
+        )
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 30
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.httpBody = try JSONEncoder().encode(body)
+        return request
+    }
+
     static func completionsURL(from baseURL: String) -> URL? {
         let trimmed = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         guard var components = URLComponents(string: trimmed),
@@ -423,19 +440,14 @@ struct LLMTranslationService: TranslationService {
 }
 
 struct OllamaTranslationService: TranslationService {
-    private struct Message: Codable {
-        let role: String
-        let content: String
-    }
-
     private struct RequestBody: Encodable {
         let model: String
-        let messages: [Message]
+        let messages: [LLMTranslationPrompt.Message]
         let stream = false
     }
 
     private struct ResponseBody: Decodable {
-        let message: Message
+        let message: LLMTranslationPrompt.Message
     }
 
     func translate(
@@ -468,16 +480,10 @@ struct OllamaTranslationService: TranslationService {
         }
         let body = RequestBody(
             model: model,
-            messages: [
-                Message(role: "system", content: LLMTranslationPrompt.systemPrompt),
-                Message(
-                    role: "user",
-                    content: LLMTranslationPrompt.userPrompt(
-                        text: text,
-                        targetLanguage: targetLanguage
-                    )
-                )
-            ]
+            messages: LLMTranslationPrompt.messages(
+                text: text,
+                targetLanguage: targetLanguage
+            )
         )
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
