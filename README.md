@@ -1,5 +1,12 @@
 # Trans
 
+
+<img width="1720" height="1120" alt="image" src="https://github.com/user-attachments/assets/75b0f85c-1d75-4f5d-95a4-ae6acbc7f784" />
+<img width="1720" height="1120" alt="image" src="https://github.com/user-attachments/assets/586dad9c-e8d3-41c2-9602-fcfc18a8c424" />
+<img width="2150" height="1014" alt="2026-08-06 15 59 37" src="https://github.com/user-attachments/assets/dbf19ca2-9efb-418c-b679-9d613cee4463" />
+
+
+
 Trans 是一款轻量的原生 macOS 菜单栏翻译工具。第一版包含：
 
 - 任意应用中选中文本后显示翻译浮层，点击翻译，再次点击复制结果。
@@ -9,6 +16,8 @@ Trans 是一款轻量的原生 macOS 菜单栏翻译工具。第一版包含：
 - 主面板和划词结果气泡支持使用系统语音朗读翻译结果。
 - 本地翻译历史、微软翻译、阿里云机器翻译、OpenAI 兼容 LLM 和 Ollama 配置。
 - 翻译服务支持启用、拖动排序和按优先级自动降级。
+
+全局任意环境兼容
 
 ## 环境
 
